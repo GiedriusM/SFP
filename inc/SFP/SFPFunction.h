@@ -58,7 +58,6 @@ typedef enum {
 typedef enum {
 	SFP_ARG_VOID = 0,
 	SFP_ARG_INT = 'i',
-	SFP_ARG_STRING = 's',
 	SFP_ARG_BYTE_ARRAY = 'b',
 } SFPArgumentType;
 
@@ -77,7 +76,6 @@ void			SFPFunction_setType(SFPFunction *func, SFPFunctionType type);
 SFPFunctionType	SFPFunction_getType(SFPFunction *func);
 
 SFPResult		SFPFunction_addArgument_int32(SFPFunction *func, int32_t i);
-SFPResult		SFPFunction_addArgument_string(SFPFunction *func, const char* s);
 SFPResult		SFPFunction_addArgument_barray(SFPFunction *func, uint8_t *data, uint32_t size);
 
 SFPResult		SFPFunction_setArgument_int32(SFPFunction *func, uint32_t pos, int32_t i);
@@ -86,7 +84,6 @@ uint32_t		SFPFunction_getArgumentCount(SFPFunction *func);
 SFPArgumentType	SFPFunction_getArgumentType(SFPFunction *func, uint32_t position);
 
 int32_t			SFPFunction_getArgument_int32 (SFPFunction *func, uint32_t position);
-char*			SFPFunction_getArgument_string(SFPFunction *func, uint32_t position);
 uint8_t*		SFPFunction_getArgument_barray(SFPFunction *func, uint32_t position, uint32_t *size);
 
 void			SFPFunction_send(SFPFunction *func, SFPStream *stream);

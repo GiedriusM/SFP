@@ -48,7 +48,6 @@ typedef struct _SFPArgument {
 	union {
 		int32_t i;	// integer
 		float f;	// float
-		char* s;	// string
 		uint8_t* b;	// blob
 	} data;
 } SFPArgument;
@@ -101,7 +100,7 @@ void SFPFunction_delete(SFPFunction *func) {
 
 	uint32_t i;
 	for (i=0; i<func->argumentCount; i++) {
-		if (func->arguments[i]->type == SFP_ARG_STRING || func->arguments[i]->type == SFP_ARG_BYTE_ARRAY) {
+		if (func->arguments[i]->type == SFP_ARG_BYTE_ARRAY) {
 			MemoryManager_free(func->arguments[i]->data.b);
 		}
 		MemoryManager_free(func->arguments[i]);
@@ -183,37 +182,6 @@ SFPResult SFPFunction_addArgument_int32(SFPFunction *func, int32_t i) {
 	return res;
 }
 
-SFPResult SFPFunction_addArgument_string(SFPFunction *func, const char* s) {
-	/* Allocate SFPArgument */
-	SFPArgument* sfpArgument = (SFPArgument*)MemoryManager_malloc(sizeof(SFPArgument));
-
-	if (sfpArgument == NULL)
-		return SFP_ERR_ALLOC_FAILED;
-
-	/* Allocate string */
-	uint32_t len = strlen(s);
-	char* stringCopy = (char*)MemoryManager_malloc(len+1);
-
-	if (stringCopy == NULL) {
-		MemoryManager_free(sfpArgument);
-		return SFP_ERR_ALLOC_FAILED;
-	}
-
-	/* Do the rest */
-
-	sfpArgument->size = len;
-	sfpArgument->type = SFP_ARG_STRING;
-	sfpArgument->data.s = stringCopy;
-	strcpy(sfpArgument->data.s, s);
-
-	SFPResult res = SFPFunction_addArgument(func, sfpArgument);
-
-	if (res != SFP_OK)
-		MemoryManager_free(sfpArgument);
-
-	return res;
-}
-
 SFPResult SFPFunction_addArgument_barray(SFPFunction *func, uint8_t *data, uint32_t size) {
 	/* Allocate SFPArgument */
 	SFPArgument *sfpArgument = (SFPArgument*)MemoryManager_malloc(sizeof(SFPArgument));
@@ -273,14 +241,6 @@ int32_t SFPFunction_getArgument_int32(SFPFunction *func, uint32_t position) {
 	return 0;
 }
 
-char* SFPFunction_getArgument_string(SFPFunction *func, uint32_t position) {
-	if (position < func->argumentCount) {
-		return func->arguments[position]->data.s;
-	}
-
-	return NULL;
-}
-
 uint8_t* SFPFunction_getArgument_barray(SFPFunction *func, uint32_t position, uint32_t *size) {
 	if (position < func->argumentCount) {
 		*size = func->arguments[position]->size;
@@ -293,14 +253,14 @@ uint8_t* SFPFunction_getArgument_barray(SFPFunction *func, uint32_t position, ui
 
 void SFPFunction_send(SFPFunction *func, SFPStream *stream) {
 	if (func->type == SFP_FUNC_TYPE_BIN) {
-		uint32_t packetSize = 1;
+		uint32_t packetSize = 1;	// There's at least the function ID
 
 		uint32_t i;
 		for (i=0; i<func->argumentCount; i++) {
 			switch (func->arguments[i]->type) {
 				case SFP_ARG_INT: {
 					uint32_t argInt = func->arguments[i]->data.i;
-					if (argInt == 0)
+					if (argInt < 64) // "Short" integer
 						packetSize += 1;
 					else if (argInt < 0x100)
 						packetSize += 2;
@@ -313,35 +273,15 @@ void SFPFunction_send(SFPFunction *func, SFPStream *stream) {
 
 					break;
 				}
-				case SFP_ARG_STRING: {
-					uint32_t argLen = func->arguments[i]->size;
-
-					if (argLen == 0)
-						packetSize += 1;
-					else if (argLen < 0x100)
-						packetSize += 2 + argLen;
-					else if (argLen < 0x10000)
-						packetSize += 3 + argLen;
-					else if (argLen < 0x1000000)
-						packetSize += 4 + argLen;
-					else
-						packetSize += 5 + argLen;
-
-					break;
-				}
 				case SFP_ARG_BYTE_ARRAY: {
 					uint32_t argLen = func->arguments[i]->size;
 
-					if (argLen == 0)
-						packetSize += 1;
+					if (argLen < 64) // "Short" array
+						packetSize += 1 + argLen;
 					else if (argLen < 0x100)
 						packetSize += 2 + argLen;
-					else if (argLen < 0x10000)
-						packetSize += 3 + argLen;
-					else if (argLen < 0x1000000)
-						packetSize += 4 + argLen;
 					else
-						packetSize += 5 + argLen;
+						packetSize += 3 + argLen;
 
 					break;
 				}
@@ -366,22 +306,22 @@ void SFPFunction_send(SFPFunction *func, SFPStream *stream) {
 			switch (func->arguments[i]->type) {
 				case SFP_ARG_INT: {
 					uint32_t argInt = func->arguments[i]->data.i;
-					if (argInt == 0) {
-						*ptr++ = 0x80;
+					if (argInt < 64) {
+						*ptr++ = argInt;
 					} else if (argInt < 0x100) {
-						*ptr++ = 0x81;
+						*ptr++ = 0xC0;
 						*ptr++ = argInt;
 					} else if (argInt < 0x10000) {
-						*ptr++ = 0x82;
+						*ptr++ = 0xC1;
 						*ptr++ = (argInt >> 8);
 						*ptr++ = argInt;
 					} else if (argInt < 0x1000000) {
-						*ptr++ = 0x83;
+						*ptr++ = 0xC2;
 						*ptr++ = (argInt >> 16);
 						*ptr++ = (argInt >> 8);
 						*ptr++ = argInt;
 					} else {
-						*ptr++ = 0x84;
+						*ptr++ = 0xC3;
 						*ptr++ = (argInt >> 24);
 						*ptr++ = (argInt >> 16);
 						*ptr++ = (argInt >> 8);
@@ -390,58 +330,16 @@ void SFPFunction_send(SFPFunction *func, SFPStream *stream) {
 
 					break;
 				}
-				case SFP_ARG_STRING: {
-					uint32_t argLen = func->arguments[i]->size;
-
-					if (argLen == 0) {
-						*ptr++ = 0x90;
-					} else if (argLen < 0x100) {
-						*ptr++ = 0x91;
-						*ptr++ = argLen;
-					} else if (argLen < 0x10000) {
-						*ptr++ = 0x92;
-						*ptr++ = (argLen >> 8);
-						*ptr++ = argLen;
-					} else if (argLen < 0x1000000) {
-						*ptr++ = 0x93;
-						*ptr++ = (argLen >> 16);
-						*ptr++ = (argLen >> 8);
-						*ptr++ = argLen;
-					} else {
-						*ptr++ = 0x94;
-						*ptr++ = (argLen >> 24);
-						*ptr++ = (argLen >> 16);
-						*ptr++ = (argLen >> 8);
-						*ptr++ = argLen;
-					}
-
-					uint8_t *ptrStr = func->arguments[i]->data.b;
-					while (argLen--)
-						*ptr++ = *ptrStr++;
-
-					break;
-				}
 				case SFP_ARG_BYTE_ARRAY: {
 					uint32_t argLen = func->arguments[i]->size;
 
-					if (argLen == 0) {
-						*ptr++ = 0xA0;
+					if (argLen < 64) {
+						*ptr++ = (1 << 6) | argLen;
 					} else if (argLen < 0x100) {
-						*ptr++ = 0xA1;
-						*ptr++ = argLen;
-					} else if (argLen < 0x10000) {
-						*ptr++ = 0xA2;
-						*ptr++ = (argLen >> 8);
-						*ptr++ = argLen;
-					} else if (argLen < 0x1000000) {
-						*ptr++ = 0xA3;
-						*ptr++ = (argLen >> 16);
-						*ptr++ = (argLen >> 8);
+						*ptr++ = 0xC4;
 						*ptr++ = argLen;
 					} else {
-						*ptr++ = 0xA4;
-						*ptr++ = (argLen >> 24);
-						*ptr++ = (argLen >> 16);
+						*ptr++ = 0xC5;
 						*ptr++ = (argLen >> 8);
 						*ptr++ = argLen;
 					}
@@ -481,12 +379,6 @@ void SFPFunction_send(SFPFunction *func, SFPStream *stream) {
 					else
 						packetSize += 2+8;
 
-					break;
-				}
-				case SFP_ARG_STRING: {
-					uint32_t argLen = func->arguments[i]->size;
-
-					packetSize += argLen + 2; // chars + two double quotes
 					break;
 				}
 				case SFP_ARG_BYTE_ARRAY: {
@@ -539,13 +431,6 @@ void SFPFunction_send(SFPFunction *func, SFPStream *stream) {
 					*ptr++ = SFPMisc_hexChar(argInt);
 
 
-					break;
-				}
-				case SFP_ARG_STRING: {
-					*ptr++ = '"';
-					strcpy((char*)ptr, func->arguments[i]->data.s);
-					ptr += strlen(func->arguments[i]->data.s);
-					*ptr++ = '"';
 					break;
 				}
 				case SFP_ARG_BYTE_ARRAY: {

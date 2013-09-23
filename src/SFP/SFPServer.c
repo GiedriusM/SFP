@@ -335,48 +335,78 @@ SFPResult SFPServer_cycle(SFPServer *server) {
 
 				while (server->tmpLenInt > 0) {
 					uint8_t argType = stream->readByte();
+					server->tmpLenInt--;
 
-					server->tmpArgInt = 0;
-					uint8_t i = argType & 0xF;
-					while (i--) {
-						server->tmpArgInt = (server->tmpArgInt << 8) | stream->readByte();
-					}
-					server->tmpLenInt -= (1 + (argType & 0xF));	// argType + argData
+					if ((argType & 0xC0) == 0) { // Short int
+						SFPFunction_addArgument_int32(server->tmpFunction, argType & 0x3F);
+					} else if ((argType & 0xC0) == (1 << 6)) { // Short byte array
+						uint8_t nBytes = argType & 0x3F;
 
-					switch (argType & 0xF0) {
-						case 0x80:
-							SFPFunction_addArgument_int32(server->tmpFunction, server->tmpArgInt);
-							break;
-						case 0x90:
-							if (SFPServer_tmpBufferEnsureCapacity(server, server->tmpArgInt+1)) {
-								stream->read((uint8_t*)server->tmpStringBuf, server->tmpArgInt);
-								server->tmpStringBuf[server->tmpArgInt] = '\0';
-								SFPFunction_addArgument_string(server->tmpFunction, (char*)server->tmpStringBuf);
-								SFPServer_tmpBufferClear(server);
-							} else {
-								server->stage = SFP_STAGE_FUNCTION_START;
-								SFPServer_tmpBufferClear(server);
-								SFPFunction_delete(server->tmpFunction);
-								return SFP_ERR_ALLOC_FAILED;
-							}
-							break;
-						case 0xA0:
-							if (SFPServer_tmpBufferEnsureCapacity(server, server->tmpArgInt)) {
-								stream->read((uint8_t*)server->tmpStringBuf, server->tmpArgInt);
-								SFPFunction_addArgument_barray(server->tmpFunction, server->tmpStringBuf, (uint32_t)server->tmpArgInt);
-								SFPServer_tmpBufferClear(server);
-							} else {
-								server->stage = SFP_STAGE_FUNCTION_START;
-								SFPServer_tmpBufferClear(server);
-								SFPFunction_delete(server->tmpFunction);
-								return SFP_ERR_ALLOC_FAILED;
-							}
-							break;
-						default:
+						if (SFPServer_tmpBufferEnsureCapacity(server, nBytes)) {
+							stream->read((uint8_t*)server->tmpStringBuf, nBytes);
+							server->tmpLenInt -= nBytes;
+							SFPFunction_addArgument_barray(server->tmpFunction, server->tmpStringBuf, (uint32_t)nBytes);
+							SFPServer_tmpBufferClear(server);
+						} else {
+							// TODO: read remaining packet bytes
 							server->stage = SFP_STAGE_FUNCTION_START;
 							SFPServer_tmpBufferClear(server);
 							SFPFunction_delete(server->tmpFunction);
 							return SFP_ERR_ALLOC_FAILED;
+						}
+					} else if ((argType & 0xC0) == (2 << 6)) { // Reserved short type
+						server->stage = SFP_STAGE_FUNCTION_START;
+						SFPFunction_delete(server->tmpFunction);
+						return SFP_ERR_FORMAT;
+					} else {  // Extended type
+						argType &= 0x3F;
+
+						server->tmpArgInt = 0;
+
+						switch (argType) {
+							case 3:
+								server->tmpArgInt = (server->tmpArgInt << 8) | stream->readByte();
+								server->tmpLenInt--;
+							case 2:
+								server->tmpArgInt = (server->tmpArgInt << 8) | stream->readByte();
+								server->tmpLenInt--;
+							case 1:
+								server->tmpArgInt = (server->tmpArgInt << 8) | stream->readByte();
+								server->tmpLenInt--;
+							case 0:
+								server->tmpArgInt = (server->tmpArgInt << 8) | stream->readByte();
+								server->tmpLenInt--;
+
+								SFPFunction_addArgument_int32(server->tmpFunction, server->tmpArgInt);
+								break;
+
+							case 5:
+								server->tmpArgInt = (server->tmpArgInt << 8) | stream->readByte();
+								server->tmpLenInt--;
+							case 4:
+								server->tmpArgInt = (server->tmpArgInt << 8) | stream->readByte();
+								server->tmpLenInt--;
+
+								if (SFPServer_tmpBufferEnsureCapacity(server, server->tmpArgInt)) {
+									stream->read((uint8_t*)server->tmpStringBuf, server->tmpArgInt);
+									server->tmpLenInt -= server->tmpArgInt;
+									SFPFunction_addArgument_barray(server->tmpFunction, server->tmpStringBuf, (uint32_t)server->tmpArgInt);
+									SFPServer_tmpBufferClear(server);
+								} else {
+									// TODO: read remaining packet bytes
+									server->stage = SFP_STAGE_FUNCTION_START;
+									SFPServer_tmpBufferClear(server);
+									SFPFunction_delete(server->tmpFunction);
+									return SFP_ERR_ALLOC_FAILED;
+								}
+								break;
+							default:
+								// TODO: read remaining packet bytes
+								server->stage = SFP_STAGE_FUNCTION_START;
+								SFPFunction_delete(server->tmpFunction);
+								return SFP_ERR_FORMAT;
+								break;
+						}
 					}
 				}
 
@@ -385,6 +415,7 @@ SFPResult SFPServer_cycle(SFPServer *server) {
 					server->stage = SFP_STAGE_FUNCTION_START;
 				} else if (server->tmpLenInt < 0) { // Too many bytes were read - error
 					server->stage = SFP_STAGE_FUNCTION_START;
+					// TODO: reset stream
 					return SFP_ERR_FORMAT;
 				}
 				break;
@@ -573,10 +604,9 @@ SFPResult SFPServer_cycle(SFPServer *server) {
 						server->stage = SFP_STAGE_PARAM_PARSE_STRING_ESCAPE;
 						break;
 					} else if (c == '"') {
-						server->stage = SFP_STAGE_PARAM_END;
-						SFPServer_tmpBufferAppendByte(server, 0);
-						SFPFunction_addArgument_string(server->tmpFunction, (char*)server->tmpStringBuf);
+						SFPFunction_addArgument_barray(server->tmpFunction, server->tmpStringBuf, server->tmpStringBufPos);
 						SFPServer_tmpBufferClear(server);
+						server->stage = SFP_STAGE_PARAM_END;
 						break;
 					} else if ((c >= 32) && (c <= 126)) {
 						SFPServer_tmpBufferAppendByte(server, c);
@@ -648,10 +678,9 @@ SFPResult SFPServer_cycle(SFPServer *server) {
 						if (c == '\\') {
 							server->stage = SFP_STAGE_PARAM_PARSE_STRING_ESCAPE;
 						} else if (c == '"') {
-							server->stage = SFP_STAGE_PARAM_END;
-							SFPServer_tmpBufferAppendByte(server, 0);
-							SFPFunction_addArgument_string(server->tmpFunction, (char*)server->tmpStringBuf);
+							SFPFunction_addArgument_barray(server->tmpFunction, server->tmpStringBuf, server->tmpStringBufPos);
 							SFPServer_tmpBufferClear(server);
+							server->stage = SFP_STAGE_PARAM_END;
 						} else if ((c >= 32) && (c <= 126)) {
 							SFPServer_tmpBufferAppendByte(server, c);
 						} else { // Error
@@ -683,10 +712,9 @@ SFPResult SFPServer_cycle(SFPServer *server) {
 						if (c == '\\') {
 							server->stage = SFP_STAGE_PARAM_PARSE_STRING_ESCAPE;
 						} else if (c == '"') {
-							server->stage = SFP_STAGE_PARAM_END;
-							SFPServer_tmpBufferAppendByte(server, 0);
-							SFPFunction_addArgument_string(server->tmpFunction, (char*)server->tmpStringBuf);
+							SFPFunction_addArgument_barray(server->tmpFunction, server->tmpStringBuf, server->tmpStringBufPos);
 							SFPServer_tmpBufferClear(server);
+							server->stage = SFP_STAGE_PARAM_END;
 						} else if ((c >= 32) && (c <= 126)) {
 							SFPServer_tmpBufferAppendByte(server, c);
 						} else { // Error
