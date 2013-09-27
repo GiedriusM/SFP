@@ -39,8 +39,8 @@
 
 #include "SFP/SFPMisc.h"
 
-
-#define SFP_PREALLOC_SIZE	16
+#define SFP_PREALLOC_SIZE_LOG2N		4
+#define SFP_PREALLOC_SIZE			(1<<SFP_PREALLOC_SIZE_LOG2N)
 
 typedef struct _SFPArgument {
 	uint32_t size;
@@ -114,7 +114,7 @@ SFPResult SFPFunction_setName(SFPFunction *func, const char* str) {
 	uint32_t len = strlen(str); /* Address length */
 
 	if (func->nameSize < len+1) {
-		uint32_t newSize = SFP_PREALLOC_SIZE*(len/SFP_PREALLOC_SIZE + 1); // TODO: make it faster (replace div and mult with bit shifts)
+		uint32_t newSize = ((len >> SFP_PREALLOC_SIZE_LOG2N) + 1) << SFP_PREALLOC_SIZE_LOG2N;
 		char* newAddress = (char*)MemoryManager_malloc(newSize);
 
 		if (newAddress == NULL) return SFP_ERR_ALLOC_FAILED;
