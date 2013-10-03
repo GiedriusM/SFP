@@ -242,7 +242,7 @@ void SFPServer_handleParsedFunction(SFPServer *server) {
 		}
 	}
 
-	if (!executed) {
+	if (!executed && server->defaultHandler != NULL) {
 		server->defaultHandler(server->tmpFunction);
 	}
 }
