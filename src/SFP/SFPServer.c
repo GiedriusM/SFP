@@ -94,6 +94,9 @@ typedef struct _SFPServer {
 	uint32_t tmpArgInt;
 	int32_t tmpLenInt;
 
+	uint32_t dataTimeout;
+	uint32_t dataTimeoutCount;
+
 } SFPServer;
 
 /*
@@ -132,6 +135,9 @@ SFPServer*	SFPServer_new(SFPStream *sfpStream) {
 	server->tmpStringBuf = NULL;
 	server->tmpStringBufSize = 0;
 	server->tmpStringBufPos = 0;
+
+	server->dataTimeout = 0;
+	server->dataTimeoutCount = 0; // disabled by default
 
 	return server;
 }
@@ -215,6 +221,11 @@ SFPResult SFPServer_setDefaultFunctionHandler(SFPServer *sfpServer, SFPCallbackF
 	return SFP_OK;
 }
 
+SFPResult SFPServer_setDataTimeout(SFPServer *sfpServer, uint32_t dataTimeoutCount) {
+	sfpServer->dataTimeoutCount = dataTimeoutCount;
+	return SFP_OK;
+}
+
 void SFPServer_handleParsedFunction(SFPServer *server) {
 	uint8_t executed = 0;
 
@@ -283,6 +294,18 @@ SFPResult SFPServer_cycle(SFPServer *server) {
 	SFPStream *stream = server->stream;
 
 	uint32_t available = stream->available();
+
+	if (server->dataTimeoutCount) { // if timeout not disabled
+		if (available == 0) {
+			if (server->dataTimeout++ >= server->dataTimeoutCount) {
+				server->stage = SFP_STAGE_FUNCTION_START;
+				SFPServer_tmpBufferClear(server);
+			}
+		} else {
+			server->dataTimeout = 0;	// If data available - reset counter
+		}
+	}
+
 	while (available > 0) {
 		switch (server->stage) {
 			case SFP_STAGE_FUNCTION_START:

@@ -121,6 +121,20 @@ SFPResult SFPServer_setDefaultFunctionHandler(SFPServer *sfpServer, SFPCallbackF
 
 
 /**
+ * Sets the data timeout count value. When an incomplete packet is received, this
+ * value determines how many server cycles will wait for the packet data before
+ * dropping the packet.
+ *
+ * @param sfpServer A pointer to the SFPServer instance.
+ *
+ * @param dataTimeoutCount A number of server clock cycles to wait.
+ *
+ * @return SFP_OK.
+ */
+SFPResult SFPServer_setDataTimeout(SFPServer *sfpServer, uint32_t dataTimeoutCount);
+
+
+/**
  * Performs one server cycle.
  *
  * @param sfpServer A pointer to the SFPServer instance.
